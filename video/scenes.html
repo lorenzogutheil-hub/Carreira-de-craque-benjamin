@@ -1,0 +1,538 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  html,body{margin:0;padding:0;background:transparent}
+  svg{display:block}
+  .ov{position:absolute;left:0;top:0;width:1080px;height:1920px;font-family:'Inter Display','Inter',sans-serif}
+</style></head>
+<body>
+<div id="root"></div>
+<script>
+// ===================== helpers =====================
+let uid = 0;
+const id = p => `${p}${++uid}`;
+
+function ball(x, y, r = 34, patched = true) {
+  const c = id('bc');
+  return `<g transform="translate(${x},${y})">
+    <clipPath id="${c}"><circle r="${r}"/></clipPath>
+    <circle r="${r}" fill="#f4f1ea" stroke="#222" stroke-width="${r*0.09}"/>
+    <g clip-path="url(#${c})" fill="#222">
+      <polygon points="${pent(0,0,r*0.36)}"/>
+      <polygon points="${pent(0,-r*0.95,r*0.32)}"/>
+      <polygon points="${pent(r*0.9,-r*0.3,r*0.32)}"/>
+      <polygon points="${pent(-r*0.9,-r*0.3,r*0.32)}"/>
+      <polygon points="${pent(r*0.56,r*0.8,r*0.32)}"/>
+      <polygon points="${pent(-r*0.56,r*0.8,r*0.32)}"/>
+    </g>
+    ${patched ? `<rect x="${r*0.15}" y="${-r*0.62}" width="${r*0.42}" height="${r*0.32}" rx="3" fill="#c9a26b" stroke="#6b4a24" stroke-width="2" transform="rotate(18)"/>
+    <path d="M${r*0.2},${-r*0.55} l${r*0.32},${r*0.1} M${r*0.18},${-r*0.42} l${r*0.32},${r*0.1}" stroke="#6b4a24" stroke-width="2" stroke-dasharray="4 3"/>` : ''}
+    <circle r="${r}" fill="url(#ballShade)"/>
+  </g>`;
+}
+function pent(cx, cy, r) {
+  let p = [];
+  for (let i = 0; i < 5; i++) {
+    const a = -Math.PI / 2 + i * 2 * Math.PI / 5;
+    p.push(`${cx + r * Math.cos(a)},${cy + r * Math.sin(a)}`);
+  }
+  return p.join(' ');
+}
+
+// limb: rounded thick line
+const limb = (x1, y1, x2, y2, w, col) =>
+  `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="${w}" stroke-linecap="round"/>`;
+
+// person: origin at feet center
+function person(o) {
+  o = Object.assign({
+    x: 0, y: 0, s: 1, skin: '#a8683c', shirt: '#2e9e4f', shorts: '#1d3f8f', shoes: '#222',
+    hair: 'curly', hairCol: '#161210', headband: false, scar: false, pose: 'stand',
+    face: 'smile', mustache: false, number: '', flip: false, skirt: false, belly: 0,
+    cap: false, capCol: '#1e1e1e', jacket: null, clipboard: false, gloves: false,
+    socks: '#f2f2f2', lookX: 0, lookY: 0, blood: false, rot: 0, sleeve: null, hairTop: 0
+  }, o);
+  const S = o.skin, dark = shade(S, -0.25);
+  const torsoW = 150 + o.belly;
+  // arm + leg endpoints by pose
+  let L = { // arms: shoulder -> elbow -> hand ; legs: hip -> knee -> foot
+    la: [[-72, -405], [-92, -340], [-98, -275]],
+    ra: [[72, -405], [92, -340], [98, -275]],
+    ll: [[-32, -210], [-36, -105], [-36, -15]],
+    rl: [[32, -210], [36, -105], [36, -15]],
+  };
+  if (o.pose === 'cheer') {
+    L.la = [[-72, -405], [-120, -480], [-130, -580]];
+    L.ra = [[72, -405], [120, -480], [130, -580]];
+  }
+  if (o.pose === 'kick') {
+    L.la = [[-72, -405], [-125, -355], [-170, -330]];
+    L.ra = [[72, -405], [118, -360], [160, -390]];
+    L.rl = [[32, -210], [95, -150], [150, -170]];
+    L.ll = [[-32, -210], [-40, -105], [-50, -15]];
+  }
+  if (o.pose === 'run') {
+    L.la = [[-72, -405], [-120, -360], [-100, -300]];
+    L.ra = [[72, -405], [95, -330], [140, -300]];
+    L.rl = [[32, -210], [90, -130], [70, -30]];
+    L.ll = [[-32, -210], [-70, -120], [-130, -90]];
+  }
+  if (o.pose === 'hold') {
+    L.la = [[-72, -405], [-90, -330], [-30, -300]];
+    L.ra = [[72, -405], [90, -330], [30, -300]];
+  }
+  if (o.pose === 'hug') {
+    L.la = [[-72, -405], [40, -380], [150, -400]];
+    L.ra = [[72, -405], [170, -360], [230, -420]];
+  }
+  if (o.pose === 'hand') { // right hand forward/out (hand on shoulder / giving)
+    L.ra = [[72, -405], [150, -390], [235, -400]];
+  }
+  if (o.pose === 'tuck') { // ball under right arm
+    L.ra = [[72, -405], [110, -330], [60, -290]];
+  }
+  if (o.pose === 'dive') {
+    L.la = [[-72, -405], [-150, -470], [-220, -520]];
+    L.ra = [[72, -405], [20, -500], [-40, -580]];
+  }
+  const sleeve = o.sleeve || o.jacket || o.shirt;
+  const arm = a => limb(a[0][0], a[0][1], a[1][0], a[1][1], 40, sleeve) +
+    limb(a[1][0], a[1][1], a[2][0], a[2][1], 34, o.jacket ? o.jacket : S) +
+    (o.jacket ? `<circle cx="${a[2][0]}" cy="${a[2][1]}" r="19" fill="${S}"/>` : '') +
+    `<circle cx="${a[2][0]}" cy="${a[2][1]}" r="${o.gloves ? 30 : 20}" fill="${o.gloves ? '#ff7a00' : S}"/>`;
+  const leg = l => limb(l[0][0], l[0][1], l[1][0], l[1][1], 44, o.skirt ? o.skirt : S) +
+    limb(l[1][0], l[1][1], l[2][0], l[2][1], 40, o.socks) +
+    `<ellipse cx="${l[2][0] + 14}" cy="${l[2][1] + 4}" rx="40" ry="18" fill="${o.shoes}"/>`;
+  const cid = id('hc');
+  const hy = -520, hr = 78;
+  // hair
+  let hair = '';
+  if (o.hair === 'curly') {
+    let c = '';
+    for (let i = 0; i <= 12; i++) {
+      const a = Math.PI * (1.02 + i * 0.96 / 12);
+      c += `<circle cx="${Math.cos(a) * (hr - 4)}" cy="${hy + Math.sin(a) * (hr - 6) - 4}" r="24"/>`;
+    }
+    for (let i = 0; i <= 7; i++) {
+      const a = Math.PI * (1.12 + i * 0.76 / 7);
+      c += `<circle cx="${Math.cos(a) * (hr - 30)}" cy="${hy + Math.sin(a) * (hr - 22) - 18}" r="26"/>`;
+    }
+    hair = `<g fill="${o.hairCol}">${c}</g>`;
+  } else if (o.hair === 'short') {
+    hair = `<path d="M${-hr},${hy - 5} Q${-hr},${hy - hr - 20} 0,${hy - hr - 12} Q${hr},${hy - hr - 20} ${hr},${hy - 5} Q${hr - 10},${hy - 45} 0,${hy - 52} Q${-hr + 10},${hy - 45} ${-hr},${hy - 5}Z" fill="${o.hairCol}"/>`;
+  } else if (o.hair === 'bun') {
+    hair = `<circle cx="0" cy="${hy - hr - 18}" r="34" fill="${o.hairCol}"/>
+      <path d="M${-hr - 4},${hy + 10} Q${-hr - 6},${hy - hr - 14} 0,${hy - hr - 6} Q${hr + 6},${hy - hr - 14} ${hr + 4},${hy + 10} Q${hr - 14},${hy - 40} 0,${hy - 48} Q${-hr + 14},${hy - 40} ${-hr - 4},${hy + 10}Z" fill="${o.hairCol}"/>`;
+  } else if (o.hair === 'gray') {
+    hair = `<path d="M${-hr - 2},${hy} Q${-hr},${hy - 60} ${-40},${hy - 70} L${-hr + 10},${hy - 20}Z M${hr + 2},${hy} Q${hr},${hy - 60} 40,${hy - 70} L${hr - 10},${hy - 20}Z" fill="#cfcfcf"/>
+      <path d="M-50,${hy - hr + 6} Q0,${hy - hr - 6} 50,${hy - hr + 6}" stroke="#cfcfcf" stroke-width="10" fill="none"/>`;
+  }
+  const eyeY = hy + 8;
+  const ex = 28;
+  let brows = '', mouth = '';
+  const browCol = shade(o.hairCol === '#cfcfcf' ? '#999' : o.hairCol, 0.05);
+  if (o.face === 'determined') {
+    brows = `<path d="M${-ex - 18},${eyeY - 30} L${-ex + 16},${eyeY - 22}" stroke="${browCol}" stroke-width="9" stroke-linecap="round"/>
+             <path d="M${ex + 18},${eyeY - 30} L${ex - 16},${eyeY - 22}" stroke="${browCol}" stroke-width="9" stroke-linecap="round"/>`;
+    mouth = `<path d="M-20,${hy + 48} Q0,${hy + 56} 20,${hy + 46}" stroke="#4a1f12" stroke-width="6" fill="none" stroke-linecap="round"/>`;
+  } else if (o.face === 'surprised') {
+    brows = `<path d="M${-ex - 16},${eyeY - 34} Q${-ex},${eyeY - 44} ${-ex + 16},${eyeY - 34}" stroke="${browCol}" stroke-width="8" fill="none" stroke-linecap="round"/>
+             <path d="M${ex - 16},${eyeY - 34} Q${ex},${eyeY - 44} ${ex + 16},${eyeY - 34}" stroke="${browCol}" stroke-width="8" fill="none" stroke-linecap="round"/>`;
+    mouth = `<ellipse cx="0" cy="${hy + 50}" rx="13" ry="17" fill="#4a1f12"/>`;
+  } else if (o.face === 'worried') {
+    brows = `<path d="M${-ex - 16},${eyeY - 24} L${-ex + 14},${eyeY - 34}" stroke="${browCol}" stroke-width="8" stroke-linecap="round"/>
+             <path d="M${ex + 16},${eyeY - 24} L${ex - 14},${eyeY - 34}" stroke="${browCol}" stroke-width="8" stroke-linecap="round"/>`;
+    mouth = `<path d="M-18,${hy + 52} Q0,${hy + 42} 18,${hy + 52}" stroke="#4a1f12" stroke-width="6" fill="none" stroke-linecap="round"/>`;
+  } else if (o.face === 'closed') {
+    brows = `<path d="M${-ex - 16},${eyeY - 30} Q${-ex},${eyeY - 38} ${-ex + 16},${eyeY - 30}" stroke="${browCol}" stroke-width="8" fill="none" stroke-linecap="round"/>
+             <path d="M${ex - 16},${eyeY - 30} Q${ex},${eyeY - 38} ${ex + 16},${eyeY - 30}" stroke="${browCol}" stroke-width="8" fill="none" stroke-linecap="round"/>`;
+    mouth = `<path d="M-24,${hy + 42} Q0,${hy + 66} 24,${hy + 42}" stroke="#4a1f12" stroke-width="6" fill="none" stroke-linecap="round"/>`;
+  } else {
+    brows = `<path d="M${-ex - 16},${eyeY - 30} Q${-ex},${eyeY - 38} ${-ex + 16},${eyeY - 30}" stroke="${browCol}" stroke-width="8" fill="none" stroke-linecap="round"/>
+             <path d="M${ex - 16},${eyeY - 30} Q${ex},${eyeY - 38} ${ex + 16},${eyeY - 30}" stroke="${browCol}" stroke-width="8" fill="none" stroke-linecap="round"/>`;
+    mouth = `<path d="M-26,${hy + 40} Q0,${hy + 70} 26,${hy + 40} Q0,${hy + 52} -26,${hy + 40}Z" fill="#4a1f12"/><path d="M-16,${hy + 47} Q0,${hy + 52} 16,${hy + 47}" stroke="#fff" stroke-width="5" fill="none"/>`;
+  }
+  const eyes = o.face === 'closed'
+    ? `<path d="M${-ex - 14},${eyeY} Q${-ex},${eyeY + 10} ${-ex + 14},${eyeY}" stroke="#1b1b1b" stroke-width="6" fill="none" stroke-linecap="round"/>
+       <path d="M${ex - 14},${eyeY} Q${ex},${eyeY + 10} ${ex + 14},${eyeY}" stroke="#1b1b1b" stroke-width="6" fill="none" stroke-linecap="round"/>`
+    : [-ex, ex].map(x => `<ellipse cx="${x}" cy="${eyeY}" rx="16" ry="${o.face === 'surprised' ? 21 : 18}" fill="#fff"/>
+        <circle cx="${x + o.lookX * 6}" cy="${eyeY + 2 + o.lookY * 6}" r="10" fill="#2a1a10"/>
+        <circle cx="${x + o.lookX * 6 + 4}" cy="${eyeY - 3 + o.lookY * 6}" r="3.5" fill="#fff"/>`).join('');
+  // his left eyebrow = viewer's right (x = +ex)
+  const scar = o.scar ? `<path d="M${ex - 2},${eyeY - 46} L${ex + 8},${eyeY - 18}" stroke="${shade(S, 0.35)}" stroke-width="5" stroke-linecap="round"/>
+     <path d="M${ex - 6},${eyeY - 36} l12,-3 M${ex - 3},${eyeY - 27} l12,-3" stroke="${shade(S, 0.3)}" stroke-width="3" stroke-linecap="round"/>` : '';
+  const headband = o.headband ? `<g clip-path="url(#${cid})"><rect x="${-hr - 5}" y="${hy - 64}" width="${2 * hr + 10}" height="26" fill="#ffcc00"/><rect x="${-hr - 5}" y="${hy - 64}" width="${2 * hr + 10}" height="7" fill="#ffe266"/></g>
+     <path d="M${hr - 6},${hy - 52} q30,-6 40,14 q-22,2 -40,-6Z" fill="#ffcc00"/>` : '';
+  const cap = o.cap ? `<path d="M${-hr - 2},${hy - 30} Q${-hr},${hy - hr - 30} 0,${hy - hr - 26} Q${hr},${hy - hr - 30} ${hr + 2},${hy - 30}Z" fill="${o.capCol}"/>
+     <path d="M${-hr + 10},${hy - 32} Q${-hr - 70},${hy - 34} ${-hr - 80},${hy - 18} L${-hr + 10},${hy - 22}Z" fill="${shade(o.capCol, -0.2)}"/>` : '';
+  const mst = o.mustache ? `<path d="M-38,${hy + 38} Q-20,${hy + 22} 0,${hy + 32} Q20,${hy + 22} 38,${hy + 38} Q20,${hy + 34} 0,${hy + 40} Q-20,${hy + 34} -38,${hy + 38}Z" fill="#d9d9d9"/>` : '';
+  const torso = o.skirt
+    ? `<path d="M${-torsoW / 2},${-430} Q0,${-450} ${torsoW / 2},${-430} L${torsoW / 2 + 24},${-200} L${-torsoW / 2 - 24},${-200}Z" fill="${o.shirt}"/>
+       <rect x="${-torsoW / 2 - 2}" y="-305" width="${torsoW + 4}" height="18" fill="${shade(o.shirt, -0.2)}"/>`
+    : `<rect x="${-torsoW / 2}" y="-435" width="${torsoW}" height="200" rx="40" fill="${o.jacket || o.shirt}"/>
+       ${o.jacket ? `<path d="M-22,-432 L0,-380 L22,-432Z" fill="${o.shirt}"/><line x1="0" y1="-380" x2="0" y2="-240" stroke="${shade(o.jacket, -0.3)}" stroke-width="4"/>` : ''}
+       <rect x="${-torsoW / 2 + 2}" y="-268" width="${torsoW - 4}" height="80" rx="18" fill="${o.shorts}"/>
+       ${o.number ? `<text x="0" y="-305" text-anchor="middle" font-family="Inter Display" font-weight="900" font-size="74" fill="#fff" opacity=".92">${o.number}</text>` : ''}`;
+  const clip = o.clipboard ? `<g transform="translate(-125,-330) rotate(-10)"><rect x="-38" y="-55" width="76" height="104" rx="6" fill="#8a5a2b"/><rect x="-30" y="-44" width="60" height="86" fill="#fff"/><rect x="-14" y="-62" width="28" height="14" rx="4" fill="#bbb"/>
+     <path d="M-22,-28 h44 M-22,-12 h44 M-22,4 h30 M-22,20 h40" stroke="#888" stroke-width="4"/></g>` : '';
+  return `<g transform="translate(${o.x},${o.y}) rotate(${o.rot}) scale(${o.flip ? -o.s : o.s},${o.s})">
+    <ellipse cx="0" cy="6" rx="110" ry="18" fill="#000" opacity=".18"/>
+    ${leg(L.ll)}${leg(L.rl)}
+    ${arm(L.la)}
+    ${torso}
+    <rect x="-20" y="-462" width="40" height="40" fill="${dark}"/>
+    ${arm(L.ra)}
+    ${clip}
+    <clipPath id="${cid}"><circle cx="0" cy="${hy}" r="${hr}"/></clipPath>
+    <circle cx="${-hr + 2}" cy="${hy + 10}" r="17" fill="${dark}"/><circle cx="${hr - 2}" cy="${hy + 10}" r="17" fill="${dark}"/>
+    <circle cx="0" cy="${hy}" r="${hr}" fill="${S}"/>
+    <circle cx="0" cy="${hy}" r="${hr}" fill="url(#faceShade)"/>
+    ${hair}${headband}${cap}
+    <ellipse cx="${-ex - 14}" cy="${eyeY + 30}" rx="14" ry="9" fill="#e0785f" opacity=".35"/>
+    <ellipse cx="${ex + 14}" cy="${eyeY + 30}" rx="14" ry="9" fill="#e0785f" opacity=".35"/>
+    ${eyes}${brows}${scar}
+    <path d="M-6,${hy + 24} Q0,${hy + 32} 6,${hy + 24}" stroke="${dark}" stroke-width="5" fill="none" stroke-linecap="round"/>
+    ${mst}${mouth}
+    ${o.blood ? `<path d="M${ex + 4},${eyeY - 40} q6,14 0,22 q-6,-8 0,-22Z" fill="#c0392b"/>` : ''}
+  </g>`;
+}
+function shade(hex, amt) {
+  let c = hex.replace('#', '');
+  if (c.length === 3) c = c.split('').map(x => x + x).join('');
+  let r = parseInt(c.substr(0, 2), 16), g = parseInt(c.substr(2, 2), 16), b = parseInt(c.substr(4, 2), 16);
+  const f = v => Math.max(0, Math.min(255, Math.round(amt < 0 ? v * (1 + amt) : v + (255 - v) * amt)));
+  return '#' + [f(r), f(g), f(b)].map(v => v.toString(16).padStart(2, '0')).join('');
+}
+const BEN = (o) => person(Object.assign({ skin: '#a8683c', shirt: '#2e9e4f', shorts: '#1d3f8f', hair: 'curly', headband: true, scar: true, number: '10' }, o));
+const KID = (o) => person(Object.assign({ hair: 'short' }, o));
+
+// ===================== backgrounds =====================
+const defs = `<defs>
+  <radialGradient id="ballShade" cx=".35" cy=".3" r=".8"><stop offset=".5" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".35"/></radialGradient>
+  <radialGradient id="faceShade" cx=".38" cy=".3" r=".85"><stop offset=".55" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".22"/></radialGradient>
+  <radialGradient id="vig" cx=".5" cy=".5" r=".75"><stop offset=".6" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity=".55"/></radialGradient>
+  <filter id="blur8"><feGaussianBlur stdDeviation="8"/></filter>
+  <filter id="blur30"><feGaussianBlur stdDeviation="30"/></filter>
+  <filter id="sepia"><feColorMatrix type="matrix" values=".39 .77 .19 0 0  .35 .69 .17 0 0  .27 .53 .13 0 0  0 0 0 1 0"/></filter>
+</defs>`;
+
+function sky(stops) {
+  const g = id('sky');
+  return `<linearGradient id="${g}" x1="0" y1="0" x2="0" y2="1">${stops.map(([o, c]) => `<stop offset="${o}" stop-color="${c}"/>`).join('')}</linearGradient>
+    <rect width="1080" height="1920" fill="url(#${g})"/>`;
+}
+function favela(y0, seed = 1, tint = 0) {
+  let r = mulberry(seed), s = '';
+  const cols = ['#e8a87c', '#d9705b', '#f2c879', '#8fb8a8', '#c48b9f', '#e5d1a7', '#a3c4d9', '#d4a373'];
+  for (let row = 0; row < 3; row++) {
+    let x = -40;
+    while (x < 1120) {
+      const w = 90 + r() * 90, h = 80 + r() * 90;
+      const y = y0 + row * 70 - h + (Math.sin(x / 200 + row) * 30);
+      const c = shade(cols[Math.floor(r() * cols.length)], tint);
+      s += `<rect x="${x}" y="${y}" width="${w}" height="${h + 160}" fill="${c}" stroke="${shade(c, -0.3)}" stroke-width="3"/>`;
+      s += `<rect x="${x - 6}" y="${y - 10}" width="${w + 12}" height="14" fill="${shade(c, -0.35)}"/>`;
+      for (let k = 0; k < Math.floor(w / 45); k++) {
+        const lit = r() > 0.6;
+        s += `<rect x="${x + 14 + k * 42}" y="${y + 22}" width="22" height="26" fill="${lit ? '#ffd877' : shade(c, -0.45)}"/>`;
+      }
+      x += w - 4;
+    }
+  }
+  return s;
+}
+function mulberry(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; } }
+function dirt(y0, c1 = '#c07a43', c2 = '#7a4523') {
+  const g = id('dirt'); const r = mulberry(7); let spots = '';
+  for (let i = 0; i < 70; i++) spots += `<ellipse cx="${r() * 1080}" cy="${y0 + 30 + r() * (1920 - y0)}" rx="${6 + r() * 22}" ry="${3 + r() * 7}" fill="#5a3218" opacity="${0.15 + r() * 0.25}"/>`;
+  return `<linearGradient id="${g}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${c1}"/><stop offset="1" stop-color="${c2}"/></linearGradient>
+    <path d="M0,${y0} Q540,${y0 - 40} 1080,${y0} L1080,1920 L0,1920Z" fill="url(#${g})"/>${spots}`;
+}
+function dust(x, y, n = 6, col = '#e0b07a', seed = 3) {
+  const r = mulberry(seed); let s = '';
+  for (let i = 0; i < n; i++) s += `<circle cx="${x + (r() - .5) * 220}" cy="${y + (r() - .5) * 70}" r="${20 + r() * 40}" fill="${col}" opacity="${.25 + r() * .25}"/>`;
+  return `<g filter="url(#blur8)">${s}</g>`;
+}
+function flipflop(x, y, rot = 0, col = '#2a7de1') {
+  return `<g transform="translate(${x},${y}) rotate(${rot})"><ellipse rx="22" ry="48" fill="${col}"/><ellipse rx="16" ry="42" fill="${shade(col, 0.4)}"/><path d="M0,-30 L-14,0 M0,-30 L14,0" stroke="#fff" stroke-width="5"/></g>`;
+}
+function goalpost(x, y, w, h) {
+  let net = '';
+  for (let i = 1; i < 10; i++) net += `<line x1="${x + i * w / 10}" y1="${y}" x2="${x + i * w / 10 + 20}" y2="${y + h}" stroke="#fff" stroke-width="2" opacity=".5"/>`;
+  for (let j = 1; j < 6; j++) net += `<line x1="${x}" y1="${y + j * h / 6}" x2="${x + w}" y2="${y + j * h / 6}" stroke="#fff" stroke-width="2" opacity=".5"/>`;
+  return `${net}<path d="M${x},${y + h} V${y} H${x + w} V${y + h}" stroke="#fafafa" stroke-width="16" fill="none" stroke-linejoin="round"/>`;
+}
+function stadium(cx, cy, w, h, night = false) {
+  let crowd = ''; const r = mulberry(11);
+  const cols = ['#e74c3c', '#f1c40f', '#ecf0f1', '#3498db', '#2ecc71', '#e67e22'];
+  for (let i = 0; i < 260; i++) {
+    const a = r() * Math.PI * 2, rr = 0.68 + r() * 0.3;
+    crowd += `<circle cx="${cx + Math.cos(a) * w / 2 * rr}" cy="${cy + Math.sin(a) * h / 2 * rr}" r="${4 + r() * 4}" fill="${cols[Math.floor(r() * cols.length)]}"/>`;
+  }
+  const lights = [[-0.55, -1.2], [0.55, -1.2], [-0.95, -0.55], [0.95, -0.55]].map(([a, b]) =>
+    `<line x1="${cx + a * w / 2}" y1="${cy + b * h / 2}" x2="${cx + a * w / 2}" y2="${cy + b * h / 2 + h * 0.5}" stroke="#555" stroke-width="8"/>
+     <rect x="${cx + a * w / 2 - 30}" y="${cy + b * h / 2 - 20}" width="60" height="30" fill="#fffbe0"/>
+     <circle cx="${cx + a * w / 2}" cy="${cy + b * h / 2 - 5}" r="70" fill="#fff6c0" opacity="${night ? .5 : .3}" filter="url(#blur30)"/>`).join('');
+  return `${lights}<ellipse cx="${cx}" cy="${cy}" rx="${w / 2}" ry="${h / 2}" fill="#3b3f58"/>
+    ${crowd}
+    <ellipse cx="${cx}" cy="${cy}" rx="${w / 2 * .62}" ry="${h / 2 * .56}" fill="#2fa34a"/>
+    <ellipse cx="${cx}" cy="${cy}" rx="${w / 2 * .62}" ry="${h / 2 * .56}" fill="none" stroke="#fff" stroke-width="4"/>
+    <line x1="${cx}" y1="${cy - h / 2 * .56}" x2="${cx}" y2="${cy + h / 2 * .56}" stroke="#fff" stroke-width="4"/>
+    <circle cx="${cx}" cy="${cy}" r="${h * .1}" fill="none" stroke="#fff" stroke-width="4"/>`;
+}
+function rays(cx, cy, col = '#fff3c4', n = 14, op = .18) {
+  let s = '';
+  for (let i = 0; i < n; i++) {
+    const a = i * Math.PI * 2 / n, b = a + Math.PI / n * 0.5;
+    s += `<path d="M${cx},${cy} L${cx + Math.cos(a) * 2400},${cy + Math.sin(a) * 2400} L${cx + Math.cos(b) * 2400},${cy + Math.sin(b) * 2400}Z" fill="${col}" opacity="${op}"/>`;
+  }
+  return s;
+}
+
+// ===================== scenes =====================
+const SCENES = {
+  // ---------- PARTE 1 ----------
+  p1s1: () => `
+    ${sky([[0, '#2b1d5c'], [.35, '#a63d6b'], [.55, '#ff7b3d'], [.68, '#ffc46b']])}
+    <circle cx="540" cy="1080" r="230" fill="#ffd36b" opacity=".55" filter="url(#blur30)"/>
+    <circle cx="540" cy="1080" r="150" fill="#ffe08a"/>
+    <g opacity=".95">${favela(1080, 3, -0.15)}</g>
+    ${dirt(1200)}
+    ${flipflop(170, 1420, -20)}${flipflop(330, 1430, 15, '#e14b2a')}
+    ${BEN({ x: 560, y: 1780, s: 1.75, pose: 'kick', face: 'smile', lookY: -0.6, lookX: 0.5 })}
+    ${ball(830, 1250, 60)}
+    <path d="M760,1420 q40,-80 60,-120" stroke="#fff" stroke-width="6" stroke-dasharray="10 14" fill="none" opacity=".7"/>
+    ${dust(800, 1760, 8)}
+    <rect width="1080" height="1920" fill="url(#vig)"/>`,
+  p1s2: () => `
+    ${sky([[0, '#5a2d6e'], [.45, '#ff8a4c'], [.65, '#ffcf86']])}
+    <circle cx="820" cy="1000" r="110" fill="#ffe08a"/>
+    ${favela(1020, 9, -0.1)}
+    ${dirt(1120)}
+    ${flipflop(120, 1300, -10, '#2ecc71')}${flipflop(250, 1300, 8, '#2ecc71')}
+    ${KID({ x: 230, y: 1640, s: 1.3, shirt: '#c0392b', skin: '#7a4a2a', pose: 'run', face: 'surprised', flip: true, hairCol: '#2b1b12' })}
+    ${KID({ x: 900, y: 1700, s: 1.4, shirt: '#34495e', skin: '#d6a77a', pose: 'run', face: 'worried', hairCol: '#5a3a20' })}
+    ${BEN({ x: 560, y: 1800, s: 1.55, pose: 'run', face: 'determined', lookX: 0.6, lookY: 0.5 })}
+    ${ball(720, 1790, 44)}
+    ${dust(500, 1800, 9, '#d9a46e', 5)}
+    <g transform="translate(790,420)">
+      <circle r="230" fill="#1b1b1b" opacity=".25"/>
+      <circle r="215" fill="#f3e3c3" stroke="#fff" stroke-width="12"/>
+      <path d="M-150,60 Q-160,-40 -60,-60 L80,-70 Q170,-60 165,40 Q160,95 60,95 L-120,95 Q-150,95 -150,60Z" fill="#2b2b2b"/>
+      <path d="M-150,70 L165,60 L160,105 L-140,110Z" fill="#555"/>
+      <path d="M-40,-62 L-20,40 M0,-66 L20,40 M40,-68 L60,40" stroke="#ddd" stroke-width="6"/>
+      <ellipse cx="135" cy="10" rx="34" ry="26" fill="#a8683c"/>
+      <path d="M110,-10 q25,-20 55,0" stroke="#5a3218" stroke-width="6" fill="none"/>
+      <text x="0" y="175" text-anchor="middle" font-family="Inter Display" font-weight="900" font-size="38" fill="#7a4523">FURO NO DEDÃO</text>
+    </g>
+    <rect width="1080" height="1920" fill="url(#vig)"/>`,
+  p1s3: () => `
+    <g filter="url(#sepia)">
+      ${sky([[0, '#7aa6d6'], [.6, '#e9d8a6']])}
+      ${favela(1060, 21)}
+      ${dirt(1150)}
+      ${KID({ x: 170, y: 1560, s: 1.05, shirt: '#2980b9', skin: '#c68e5e', face: 'surprised', lookX: 1 })}
+      ${KID({ x: 900, y: 1580, s: 1.1, shirt: '#e67e22', skin: '#6e4224', face: 'surprised', lookX: -1, flip: true })}
+      ${KID({ x: 760, y: 1500, s: .9, shirt: '#8e44ad', skin: '#e0b48a', face: 'surprised', lookX: -1, hairCol: '#7a4a1a' })}
+      ${person({ x: 520, y: 1780, s: 1.4, skin: '#a8683c', shirt: '#2e9e4f', shorts: '#1d3f8f', hair: 'curly', headband: false, scar: false, blood: true, face: 'determined', pose: 'stand' })}
+      ${ball(330, 1760, 44)}
+      ${dust(520, 1780, 7, '#ddd', 8)}
+    </g>
+    <rect width="1080" height="1920" fill="url(#vig)"/>
+    <rect width="1080" height="1920" fill="#3a2a10" opacity=".12"/>
+    <text x="540" y="1240" text-anchor="middle" font-family="Inter Display" font-weight="800" font-size="46" fill="#fff6dc" opacity=".85" letter-spacing="8">8 ANOS ATRÁS</text>`,
+  p1s4: () => `
+    <rect width="1080" height="1920" fill="#3b2a24"/>
+    <rect x="0" y="0" width="1080" height="1350" fill="#c9a77c"/>
+    <rect x="0" y="0" width="1080" height="1350" fill="url(#vig)" opacity=".6"/>
+    <rect x="90" y="330" width="320" height="380" fill="#16213e" stroke="#6b4a2e" stroke-width="22"/>
+    <circle cx="320" cy="420" r="46" fill="#f5f0d0"/><circle cx="302" cy="408" r="44" fill="#16213e"/>
+    ${[[140, 380], [200, 480], [360, 600], [150, 640], [260, 360]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="4" fill="#fff"/>`).join('')}
+    <line x1="250" y1="330" x2="250" y2="710" stroke="#6b4a2e" stroke-width="12"/>
+    <line x1="720" y1="0" x2="720" y2="300" stroke="#333" stroke-width="6"/>
+    <path d="M640,300 L800,300 L760,240 L680,240Z" fill="#8a5a2b"/>
+    <circle cx="720" cy="330" r="380" fill="#ffcf7a" opacity=".35" filter="url(#blur30)"/>
+    <circle cx="720" cy="312" r="22" fill="#fff4c4"/>
+    <rect x="760" y="760" width="300" height="420" fill="#ececec" stroke="#999" stroke-width="6"/>
+    <rect x="780" y="700" width="260" height="60" fill="#444"/>
+    <circle cx="840" cy="730" r="20" fill="#222"/><circle cx="960" cy="730" r="20" fill="#222"/>
+    <rect x="0" y="1340" width="1080" height="30" fill="#5a3d2b"/>
+    ${person({ x: 420, y: 1800, s: 1.7, skin: '#8d5130', shirt: '#4f7cac', skirt: '#4f7cac', hair: 'bun', hairCol: '#1b1210', pose: 'hug', face: 'closed', socks: '#8d5130', shoes: '#3a3a3a' })}
+    ${BEN({ x: 640, y: 1820, s: 1.45, pose: 'hold', face: 'closed' })}
+    ${ball(900, 1820, 52)}
+    <path d="M520,780 c-20,-30 -60,-10 -40,20 l40,40 l40,-40 c20,-30 -20,-50 -40,-20Z" fill="#ff5c7a" opacity=".85"/>
+    <rect width="1080" height="1920" fill="#ff9a3c" opacity=".08"/>`,
+  p1s5: () => `
+    <rect width="1080" height="1920" fill="#1d2140"/>
+    ${[[60, 200, 180, 120], [820, 1100, 200, 150], [500, 1250, 130, 90], [880, 260, 120, 160]].map(([x, y, w, h]) => `<path d="M${x},${y} q${w * .3},-20 ${w * .6},10 q${w * .4},${h * .3} ${w * .2},${h * .7} q${-w * .4},${h * .4} ${-w * .7},${h * .1} q${-w * .2},${-h * .5} ${-w * .1},${-h * .9}Z" fill="#3a3f6b"/>`).join('')}
+    <g transform="translate(110,1060) rotate(-4)"><rect width="230" height="320" fill="#f1c40f"/><rect x="15" y="15" width="200" height="230" fill="#2e86de"/>
+      <circle cx="115" cy="90" r="38" fill="#7a4a2a"/><rect x="70" y="128" width="90" height="110" rx="20" fill="#f1c40f"/><text x="115" y="215" text-anchor="middle" font-family="Inter Display" font-weight="900" font-size="54" fill="#2e86de">10</text>
+      <text x="115" y="295" text-anchor="middle" font-family="Inter Display" font-weight="900" font-size="34" fill="#1b1b1b">CRAQUE</text></g>
+    <g transform="translate(760,1020) rotate(5)"><rect width="230" height="300" fill="#ecf0f1"/><rect x="15" y="15" width="200" height="200" fill="#27ae60"/>
+      ${ball(115, 115, 60, false)}<text x="115" y="270" text-anchor="middle" font-family="Inter Display" font-weight="900" font-size="38" fill="#1b1b1b">GOL!</text></g>
+    <ellipse cx="540" cy="560" rx="470" ry="330" fill="#fff" opacity=".18" filter="url(#blur30)"/>
+    <path d="M140,600 q-60,-190 120,-250 q60,-160 260,-120 q170,-110 320,40 q190,20 130,230 q60,170 -150,220 q-120,110 -300,40 q-200,70 -280,-60 q-170,-30 -100,-100Z" fill="#fdfbff" opacity=".95"/>
+    <g transform="translate(0,20)">${stadium(540, 560, 720, 360)}</g>
+    <text x="540" y="330" text-anchor="middle" font-family="Inter Display" font-weight="900" font-size="58" fill="#e74c3c">BENJAMIN! BENJAMIN!</text>
+    <circle cx="430" cy="980" r="16" fill="#fff" opacity=".9"/><circle cx="470" cy="900" r="24" fill="#fff" opacity=".9"/>
+    <rect x="80" y="1500" width="920" height="300" rx="30" fill="#6d4c41"/>
+    <rect x="100" y="1440" width="880" height="140" rx="30" fill="#ecf0f1"/>
+    <rect x="100" y="1520" width="700" height="80" rx="20" fill="#e74c3c"/>
+    ${BEN({ x: 820, y: 1500, s: 1.05, rot: -90, face: 'closed', pose: 'stand' })}
+    <rect x="100" y="1560" width="520" height="70" rx="22" fill="#c0392b"/>
+    <rect width="1080" height="1920" fill="url(#vig)"/>`,
+  p1s6: () => `
+    <rect width="1080" height="1920" fill="#2a1e2e"/>
+    <g>
+      ${sky([[0, '#3c5a99'], [.25, '#f4a259'], [.4, '#ffd39a'], [1, '#ffd39a']]).replace('width="1080" height="1920"', 'x="140" y="180" width="800" height="980"')}
+      <circle cx="540" cy="960" r="140" fill="#fff0b3" filter="url(#blur30)"/>
+      <circle cx="540" cy="960" r="90" fill="#fff5cc"/>
+      <g transform="translate(140,0)" clip-path="url(#winclip)"></g>
+      <path d="M140,1000 q160,-60 300,-10 q180,-70 500,-20 L940,1160 L140,1160Z" fill="#7a4f6b"/>
+      <path d="M140,1060 q260,-40 800,0 L940,1160 L140,1160Z" fill="#5a3a52"/>
+    </g>
+    ${rays(540, 960, '#ffe7a8', 18, .12)}
+    <rect x="120" y="160" width="840" height="1020" fill="none" stroke="#6b4a2e" stroke-width="40"/>
+    <line x1="540" y1="160" x2="540" y2="1180" stroke="#6b4a2e" stroke-width="22"/>
+    <rect x="80" y="1170" width="920" height="60" fill="#8a5a2b"/>
+    <rect x="0" y="1230" width="1080" height="690" fill="#3b2a3a"/>
+    ${BEN({ x: 540, y: 1900, s: 1.65, pose: 'hold', face: 'determined', lookY: -0.8 })}
+    ${ball(540, 1440, 62)}
+    <rect width="1080" height="1920" fill="#ffb347" opacity=".08"/>
+    <rect width="1080" height="1920" fill="url(#vig)"/>`,
+
+  // ---------- PARTE 2 ----------
+  p2s1: () => `
+    ${sky([[0, '#5aa9e6'], [.6, '#bfe3ff'], [.7, '#fbe7c6']])}
+    <ellipse cx="260" cy="320" rx="160" ry="50" fill="#fff" opacity=".8"/><ellipse cx="820" cy="460" rx="190" ry="55" fill="#fff" opacity=".7"/>
+    ${favela(1060, 5, 0.05)}
+    ${dirt(1150, '#c98a52', '#8a5530')}
+    ${KID({ x: 620, y: 1360, s: .6, shirt: '#c0392b', skin: '#6e4224', pose: 'run' })}
+    ${BEN({ x: 800, y: 1380, s: .65, pose: 'run', face: 'smile' })}
+    ${ball(880, 1370, 18)}
+    ${KID({ x: 960, y: 1340, s: .55, shirt: '#2980b9', skin: '#d6a77a', pose: 'run', flip: true })}
+    ${goalpost(40, 1030, 380, 560)}
+    ${person({ x: 400, y: 1880, s: 1.75, skin: '#c68e5e', shirt: '#ecf0f1', jacket: '#2c3e50', shorts: '#2c3e50', hair: 'short', cap: true, clipboard: true, face: 'determined', lookX: 1, socks: '#2c3e50', shoes: '#111' })}
+    <rect width="1080" height="1920" fill="url(#vig)"/>`,
+  p2s2: () => `
+    ${sky([[0, '#3d7cc9'], [.7, '#a6d4ff']])}
+    ${rays(700, 700, '#fff', 22, .12)}
+    ${favela(1000, 13, 0.1)}
+    ${dirt(1080)}
+    ${KID({ x: 120, y: 1300, s: .8, shirt: '#e67e22', skin: '#7a4a2a', pose: 'cheer', face: 'smile' })}
+    ${KID({ x: 960, y: 1290, s: .8, shirt: '#8e44ad', skin: '#e0b48a', pose: 'cheer', face: 'smile', flip: true })}
+    ${KID({ x: 820, y: 1260, s: .7, shirt: '#16a085', skin: '#5a341c', pose: 'cheer', face: 'surprised' })}
+    ${goalpost(250, 820, 620, 440)}
+    ${person({ x: 300, y: 1230, s: .85, rot: 70, skin: '#d6a77a', shirt: '#f1c40f', shorts: '#222', hair: 'short', gloves: true, pose: 'dive', face: 'surprised', lookY: -1 })}
+    <path d="M520,1640 Q560,700 690,930" stroke="#fff" stroke-width="8" stroke-dasharray="14 16" fill="none"/>
+    ${ball(700, 955, 46)}
+    ${BEN({ x: 430, y: 1880, s: 1.35, pose: 'kick', face: 'determined', lookY: -1, lookX: 0.4 })}
+    ${[0, 1, 2, 3, 4].map(i => `<line x1="${120 + i * 30}" y1="${1500 + i * 60}" x2="${0 + i * 30}" y2="${1520 + i * 60}" stroke="#fff" stroke-width="8" stroke-linecap="round" opacity=".7"/>`).join('')}
+    ${dust(500, 1860, 9, '#e0b07a', 13)}
+    <text x="540" y="420" text-anchor="middle" font-family="Inter Display" font-weight="900" font-size="150" fill="#ffcc00" stroke="#1b1b1b" stroke-width="10" paint-order="stroke" transform="rotate(-6 540 420)">GOLAÇO!</text>`,
+  p2s3: () => `
+    ${sky([[0, '#6a3d7a'], [.45, '#ff8a4c'], [.65, '#ffd08a']])}
+    <circle cx="200" cy="1000" r="120" fill="#ffe7a0"/>
+    ${favela(1040, 17, -0.05)}
+    <rect x="0" y="1100" width="1080" height="820" fill="#5e9e4a"/>
+    <rect x="0" y="1100" width="1080" height="820" fill="url(#vig)" opacity=".4"/>
+    <path d="M0,1250 H1080" stroke="#fff" stroke-width="6" opacity=".6"/>
+    ${person({ x: 330, y: 1890, s: 1.85, skin: '#b07850', shirt: '#c0392b', shorts: '#fff', hair: 'gray', hairCol: '#cfcfcf', mustache: true, belly: 30, pose: 'hand', face: 'smile', lookX: 1, number: '' })}
+    ${BEN({ x: 760, y: 1880, s: 1.55, pose: 'stand', face: 'smile', lookX: -0.8, lookY: -0.4 })}
+    <g transform="translate(330,1890) scale(1.85)"><rect x="-40" y="-395" width="80" height="60" rx="10" fill="#fff"/><text x="0" y="-354" text-anchor="middle" font-family="Inter Display" font-weight="900" font-size="34" fill="#c0392b">EC</text></g>
+    <rect width="1080" height="1920" fill="#ff9a3c" opacity=".1"/>`,
+  p2s4: () => `
+    <rect width="1080" height="1920" fill="#14141f"/>
+    <path d="M1080,0 L1080,1920 L300,1920 L700,0Z" fill="#ffe8b0" opacity=".1"/>
+    <path d="M1080,0 L1080,1920 L520,1920 L860,0Z" fill="#ffe8b0" opacity=".1"/>
+    ${person({ x: 260, y: 1900, s: 1.8, skin: '#c68e5e', shirt: '#ecf0f1', jacket: '#2c3e50', shorts: '#2c3e50', hair: 'short', cap: true, pose: 'hand', face: 'determined', lookX: 1, socks: '#2c3e50', shoes: '#111' })}
+    ${BEN({ x: 830, y: 1890, s: 1.55, pose: 'stand', face: 'surprised', lookX: -0.8, flip: false })}
+    <g transform="translate(540,560) rotate(-6)">
+      <rect x="-280" y="-360" width="560" height="720" rx="20" fill="#fff"/>
+      <rect x="-250" y="-330" width="500" height="320" rx="10" fill="#0b2545"/>
+      ${stadium(0, -160, 420, 220, true)}
+      <text x="0" y="70" text-anchor="middle" font-family="Inter Display" font-weight="900" font-size="74" fill="#0b2545">PENEIRA</text>
+      <text x="0" y="140" text-anchor="middle" font-family="Inter Display" font-weight="800" font-size="46" fill="#e74c3c">SÁBADO · CAPITAL</text>
+      <text x="0" y="220" text-anchor="middle" font-family="Inter Display" font-weight="700" font-size="40" fill="#333">500 garotos</text>
+      <text x="0" y="285" text-anchor="middle" font-family="Inter Display" font-weight="900" font-size="54" fill="#0b2545">3 VAGAS</text>
+    </g>
+    <rect width="1080" height="1920" fill="url(#vig)"/>`,
+  p2s5: () => `
+    <clipPath id="leftH"><path d="M0,0 H600 L480,1920 H0Z"/></clipPath>
+    <clipPath id="rightH"><path d="M600,0 H1080 V1920 H480Z"/></clipPath>
+    <g clip-path="url(#leftH)">
+      ${sky([[0, '#ff9e5e'], [.6, '#ffd59a']])}
+      ${favela(1100, 4)}
+      <rect x="0" y="1150" width="1080" height="800" fill="#6aa84f"/>
+      ${goalpost(40, 980, 260, 200)}
+      ${KID({ x: 120, y: 1380, s: .5, shirt: '#c0392b', pose: 'cheer' })}
+      ${KID({ x: 260, y: 1400, s: .5, shirt: '#c0392b', pose: 'cheer', skin: '#6e4224' })}
+      <text x="250" y="380" text-anchor="middle" font-family="Inter Display" font-weight="900" font-size="64" fill="#1b5e20">CASA</text>
+      <text x="250" y="440" text-anchor="middle" font-family="Inter Display" font-weight="700" font-size="36" fill="#1b5e20">segurança</text>
+    </g>
+    <g clip-path="url(#rightH)">
+      ${sky([[0, '#0b1026'], [.6, '#243b6b']])}
+      ${[...Array(30)].map((_, i) => `<circle cx="${600 + (i * 97) % 480}" cy="${120 + (i * 53) % 600}" r="3" fill="#fff"/>`).join('')}
+      ${[0, 1, 2, 3, 4, 5].map(i => `<rect x="${560 + i * 90}" y="${700 + (i % 3) * 60}" width="80" height="${500}" fill="#1b2747"/>`).join('')}
+      ${stadium(800, 1040, 560, 300, true)}
+      <text x="830" y="380" text-anchor="middle" font-family="Inter Display" font-weight="900" font-size="64" fill="#ffcc00">CAPITAL</text>
+      <text x="830" y="440" text-anchor="middle" font-family="Inter Display" font-weight="700" font-size="36" fill="#ffcc00">risco</text>
+    </g>
+    <path d="M600,0 L480,1920" stroke="#fff" stroke-width="10"/>
+    ${person({ x: 150, y: 1650, s: .9, skin: '#8d5130', shirt: '#4f7cac', skirt: '#4f7cac', hair: 'bun', hairCol: '#1b1210', face: 'worried', lookX: 1, socks: '#8d5130' })}
+    ${BEN({ x: 560, y: 1880, s: 1.6, pose: 'stand', face: 'worried', lookX: -0.6 })}
+    <rect width="1080" height="1920" fill="url(#vig)"/>`,
+  p2s6: () => `
+    <rect width="1080" height="1920" fill="#120d1e"/>
+    ${rays(540, 700, '#ffcc00', 20, .14)}
+    <circle cx="540" cy="700" r="520" fill="#ffb300" opacity=".35" filter="url(#blur30)"/>
+    ${BEN({ x: 540, y: 2350, s: 2.85, pose: 'tuck', face: 'determined', lookX: 0, lookY: 0 })}
+    ${ball(760, 1540, 110)}
+    <rect width="1080" height="1920" fill="url(#vig)"/>
+    <rect x="0" y="1400" width="1080" height="520" fill="#000" opacity=".25"/>`,
+};
+
+// ===================== overlays =====================
+function overlay(q) {
+  const type = q.get('type');
+  if (type === 'meter') {
+    const v = +(q.get('v') || 0);
+    return `<div class="ov"><div style="position:absolute;top:200px;left:50%;transform:translateX(-50%);background:rgba(10,10,20,.72);border:5px solid #ffcc00;border-radius:28px;padding:18px 36px 22px;text-align:center;min-width:560px">
+      <div style="color:#fff;font-weight:900;font-size:62px;letter-spacing:2px">CARREIRA: <span style="color:#ffcc00">${v}/100</span></div>
+      <div style="margin-top:12px;height:26px;border-radius:13px;background:#333;border:3px solid #fff;overflow:hidden"><div style="height:100%;width:${Math.max(2, v)}%;background:linear-gradient(90deg,#2ecc71,#ffcc00)"></div></div>
+    </div></div>`;
+  }
+  if (type === 'title') {
+    return `<div class="ov" style="background:linear-gradient(180deg,rgba(0,0,0,0) 30%,rgba(0,0,0,.55) 50%,rgba(0,0,0,0) 70%)"><div style="position:absolute;top:760px;width:100%;text-align:center">
+      <div style="color:#ffcc00;font-weight:900;font-size:104px;line-height:1;-webkit-text-stroke:6px #1b1b1b;paint-order:stroke fill;text-shadow:0 10px 0 #1b1b1b">CARREIRA<br>DE CRAQUE</div>
+      <div style="margin-top:30px;display:inline-block;background:#e74c3c;color:#fff;font-weight:900;font-size:50px;padding:12px 34px;border-radius:18px;transform:rotate(-2deg)">${q.get('sub')}</div>
+    </div></div>`;
+  }
+  if (type === 'caption') {
+    const top = +(q.get('top') || 1290);
+    return `<div class="ov"><div style="position:absolute;top:${top}px;left:70px;right:70px;text-align:center">
+      <span style="display:inline;color:#fff;font-weight:900;font-size:66px;line-height:1.22;-webkit-text-stroke:12px #000;paint-order:stroke fill;text-shadow:0 6px 0 #000">${q.get('text')}</span>
+    </div></div>`;
+  }
+  if (type === 'buttons') {
+    return `<div class="ov"><div style="position:absolute;top:1330px;left:70px;right:70px;display:flex;flex-direction:column;gap:34px">
+      <div style="background:#1fae54;border:7px solid #fff;border-radius:34px;padding:26px 30px;color:#fff;font-weight:900;font-size:64px;box-shadow:0 12px 0 #0c5a29"><span style="background:#fff;color:#1fae54;border-radius:50%;display:inline-block;width:84px;height:84px;line-height:84px;text-align:center;margin-right:24px">A</span>Time da cidade</div>
+      <div style="background:#e0302b;border:7px solid #fff;border-radius:34px;padding:26px 30px;color:#fff;font-weight:900;font-size:64px;box-shadow:0 12px 0 #7a1210"><span style="background:#fff;color:#e0302b;border-radius:50%;display:inline-block;width:84px;height:84px;line-height:84px;text-align:center;margin-right:24px">B</span>Peneira do clube</div>
+      <div style="text-align:center;color:#ffcc00;font-weight:900;font-size:56px;-webkit-text-stroke:10px #000;paint-order:stroke fill">COMENTA A OU B! 👇</div>
+    </div></div>`;
+  }
+  if (type === 'next') {
+    return `<div class="ov"><div style="position:absolute;top:1500px;width:100%;text-align:center"><span style="background:#ffcc00;color:#111;font-weight:900;font-size:58px;padding:18px 40px;border-radius:24px;border:6px solid #111">SEGUE PRA VER A PARTE 2 ➜</span></div></div>`;
+  }
+}
+
+const q = new URLSearchParams(location.search);
+if (q.get('scene')) {
+  document.getElementById('root').innerHTML =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920">${defs}${SCENES[q.get('scene')]()}</svg>`;
+} else {
+  document.getElementById('root').innerHTML = overlay(q);
+}
+document.title = 'ready';
+</script>
+</body></html>
