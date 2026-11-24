@@ -215,7 +215,8 @@ def build(name, cfg):
         n = int(round(d * FPS))
         z = "1+0.10*on/{n}".format(n=n) if i % 2 == 0 else "1.10-0.10*on/{n}".format(n=n)
         out = f'{B}/{name}_seg{i}.mp4'
-        run(['ffmpeg', '-y', '-loglevel', 'error', '-loop', '1', '-i', f'{B}/{sc}.png',
+        if not os.path.exists(out) or os.path.getmtime(out) < os.path.getmtime(f'{B}/{sc}.png'):
+          run(['ffmpeg', '-y', '-loglevel', 'error', '-loop', '1', '-i', f'{B}/{sc}.png',
              '-vf', f"scale=1620:2880,zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={n}:s=1080x1920:fps={FPS},format=yuv420p",
              '-frames:v', str(n), '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '14', out])
         seg_files.append((out, d))
@@ -237,12 +238,33 @@ def build(name, cfg):
     last_caps = timeline[-1][3]
     end_start = last_caps[1][1] if cfg['end'] == 'buttons' else last_caps[-1][2]
     ov.append((f'{B}/{name}_end.png', end_start, total))
-    for k, (f, s, e) in enumerate(ov):
-        inputs += ['-loop', '1', '-t', f'{total:.3f}', '-i', f]
-        idx = nseg + k
-        lbl = f'[o{k}]'
-        fc.append(f"{prev}[{idx}:v]overlay=0:0:enable='between(t,{s:.3f},{e:.3f})'{lbl}")
-        prev = lbl
+    # compõe uma única trilha de sobreposição: um PNG por intervalo de tempo
+    from PIL import Image
+    cuts = sorted({0.0, total, *[x for _, s_, e_ in ov for x in (s_, e_)]})
+    cache = {}
+    lines = []
+    for k in range(len(cuts) - 1):
+        a_, b_ = cuts[k], cuts[k + 1]
+        if b_ - a_ < 1e-3:
+            continue
+        mid = (a_ + b_) / 2
+        active = tuple(f for f, s_, e_ in ov if s_ <= mid < e_)
+        if active not in cache:
+            img = Image.new('RGBA', (1080, 1920), (0, 0, 0, 0))
+            for f in active:
+                img.alpha_composite(Image.open(f).convert('RGBA'))
+            fn = f'{B}/{name}_ovl{len(cache)}.png'
+            img.save(fn)
+            cache[active] = fn
+        lines.append(f"file '{cache[active]}'\nduration {b_ - a_:.3f}")
+    lines.append(f"file '{lines[-1].split(chr(39))[1]}'")
+    cl = f'{B}/{name}_ovl.txt'
+    open(cl, 'w').write('\n'.join(lines) + '\n')
+    inputs += ['-f', 'concat', '-safe', '0', '-i', cl]
+    fc.append(f'[{nseg}:v]fps={FPS},format=rgba[ovl]')
+    fc.append(f'{prev}[ovl]overlay=0:0:shortest=0:eof_action=repeat[vout]')
+    prev = '[vout]'
+    ov = [None]
 
     # 5) música
     sfx = []
@@ -266,6 +288,9 @@ def build(name, cfg):
 
 
 if __name__ == '__main__':
-    run(['node', f'{HERE}/render_scenes.js'])
+    import sys
+    scenes = [sc for c in PARTS.values() for sc, _ in c['scenes']]
+    if '--rescenes' in sys.argv or any(not os.path.exists(f'{B}/{sc}.png') for sc in scenes):
+        run(['node', f'{HERE}/render_scenes.js'])
     for name, cfg in PARTS.items():
         build(name, cfg)
